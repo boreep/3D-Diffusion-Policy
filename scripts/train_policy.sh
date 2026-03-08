@@ -3,6 +3,8 @@
 # bash scripts/train_policy.sh dp3 dexart_laptop 0322 0 0
 # bash scripts/train_policy.sh simple_dp3 adroit_hammer 0322 0 0
 # bash scripts/train_policy.sh dp3 metaworld_basketball 0602 0 0
+# 后缀: 算法名 任务名 实验附加信息(时间) 随机种子 使用的GPU_id
+# bash scripts/train_policy.sh real_simple_dp3 real_fruit 0308 0 0
 
 
 

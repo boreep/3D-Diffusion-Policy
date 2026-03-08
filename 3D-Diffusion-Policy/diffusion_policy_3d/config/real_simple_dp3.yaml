@@ -3,7 +3,7 @@
 # 这里决定加载哪个 task 配置（数据形状、数据路径等），以及本次实验的基础命名。
 # =========================
 defaults:
-  - task: single_realrobot
+  - task: real_fruit
 
 name: train_simple_dp3
 
