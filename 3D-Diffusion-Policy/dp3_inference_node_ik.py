@@ -14,9 +14,9 @@ import rclpy
 from rclpy.node import Node
 from sensor_msgs.msg import JointState, PointCloud2
 import sensor_msgs_py.point_cloud2 as pc2
+from geometry_msgs.msg import PoseStamped  # 新增：用于发布位姿IK
 
 # 导入你指定的自定义接口
-from rm_ros_interfaces.msg import Jointpos
 from my_interfaces.msg import HeaderFloat32
 
 # 导入 DP3 的环境
@@ -37,8 +37,9 @@ class DP3InferenceNode(Node):
         self.inference_rate = 20.0
         self.use_pc_color = bool(OmegaConf.select(cfg, "policy.use_pc_color", default=False))
         self.n_action_steps = int(OmegaConf.select(cfg, "n_action_steps", default=1))
-        action_shape = OmegaConf.select(cfg, "shape_meta.action.shape", default=[7])
-        self.action_dim = int(action_shape[0]) if len(action_shape) > 0 else 7
+        # 默认action shape如果配置没写明，这里假设改为8维
+        action_shape = OmegaConf.select(cfg, "shape_meta.action.shape", default=[8])
+        self.action_dim = int(action_shape[0]) if len(action_shape) > 0 else 8
         self.max_cached_chunks = int(OmegaConf.select(cfg, "inference.max_cached_chunks", default=3))
         pc_shape = OmegaConf.select(cfg, "shape_meta.obs.point_cloud.shape", default=[1024, 3])
         self.pc_num_points = int(pc_shape[0]) if len(pc_shape) > 0 else 1024
@@ -65,7 +66,8 @@ class DP3InferenceNode(Node):
         self.sub_pointcloud = self.create_subscription(PointCloud2, 'camera/sampled_points', self.pointcloud_cb, 10)
         
         # --- 发布者 ---
-        self.pub_arm_cmd = self.create_publisher(Jointpos, 'right_arm/rm_driver/movej_canfd_cmd', 10)
+        # 修改为发布 PoseStamped 到 right_arm/ik_target_pose
+        self.pub_arm_cmd = self.create_publisher(PoseStamped, '/right_arm/ik_target_pose', 10)
         self.pub_gripper_cmd = self.create_publisher(HeaderFloat32, 'right_arm/gripper_cmd', 10)
         
         # --- 定时器 ---
@@ -80,6 +82,7 @@ class DP3InferenceNode(Node):
         self.inference_thread.start()
 
     def joint_state_cb(self, msg: JointState):
+        # 这里的观测假设依然是6维关节角，如果也改成了位姿请相应修改
         pos = np.array(msg.position[:6], dtype=np.float32)
         with self.data_lock:
             self.latest_state = pos
@@ -136,7 +139,6 @@ class DP3InferenceNode(Node):
         return arr.reshape(-1, len(ordered_names)) if arr.ndim == 1 else arr
 
     def _adapt_point_cloud_shape(self, pc_array: np.ndarray) -> np.ndarray:
-        # 特征维度裁剪/补齐
         cur_feat_dim = pc_array.shape[1]
         if cur_feat_dim > self.pc_feature_dim:
             pc_array = pc_array[:, :self.pc_feature_dim]
@@ -144,7 +146,6 @@ class DP3InferenceNode(Node):
             pad = np.zeros((pc_array.shape[0], self.pc_feature_dim - cur_feat_dim), dtype=np.float32)
             pc_array = np.concatenate([pc_array, pad], axis=1)
 
-        # 点数采样/补齐
         cur_points = pc_array.shape[0]
         if cur_points > self.pc_num_points:
             idx = np.random.choice(cur_points, self.pc_num_points, replace=False)
@@ -214,17 +215,27 @@ class DP3InferenceNode(Node):
                 target_action = self.current_action_chunk[self.current_action_idx]
                 self.current_action_idx += 1
                 
-                # 发布控制
-                self.publish_arm_control(target_action[:6])
-                self.publish_gripper_control(target_action[6])
+                # 发布控制：前7维给IK位姿，第8维给夹爪
+                self.publish_arm_control(target_action[:7])
+                self.publish_gripper_control(target_action[7])
             else:
                 self.get_logger().debug("Action cache empty", throttle_duration_sec=2.0)
 
-    def publish_arm_control(self, arm_action):
-        msg = Jointpos()
-        msg.joint = arm_action.tolist()
-        msg.follow = False   
-        msg.expand = 0.0
+    def publish_arm_control(self, ik):
+        msg = PoseStamped()
+        msg.header.stamp = self.get_clock().now().to_msg()
+        # 注意：这里的 frame_id 使用了你要求的 "ee_link"，在实际机器人中，IK目标位姿通常是相对于基座坐标系的（例如 "base_link"），如有需要你可以自行调整
+        msg.header.frame_id = "ee_link"
+
+        msg.pose.position.x = float(ik[0])
+        msg.pose.position.y = float(ik[1])
+        msg.pose.position.z = float(ik[2])
+
+        msg.pose.orientation.x = float(ik[3])  # qx
+        msg.pose.orientation.y = float(ik[4])  # qy
+        msg.pose.orientation.z = float(ik[5])  # qz
+        msg.pose.orientation.w = float(ik[6])  # qw
+
         self.pub_arm_cmd.publish(msg)
 
     def publish_gripper_control(self, gripper_action):

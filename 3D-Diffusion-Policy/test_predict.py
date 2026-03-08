@@ -30,7 +30,7 @@ def build_random_obs(cfg, batch_size: int, n_obs_steps: int, device: torch.devic
 
 
 def main():
-    default_checkpoint = "3D-Diffusion-Policy/data/outputs/adroit_hammer-simple_dp3-0306_seed0/checkpoints/latest.ckpt"
+    default_checkpoint = "3D-Diffusion-Policy/data/outputs/real_fruit-real_simple_dp3-0308_seed0/checkpoints/epoch=1000-test_mean_score=-0.000.ckpt"
     parser = argparse.ArgumentParser(description="使用随机输入测试策略模型的 predict_action 输出维度。")
     parser.add_argument(
         "--checkpoint",
