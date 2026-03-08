@@ -1,0 +1,198 @@
+# =========================
+# 1) 任务选择与实验名
+# 这里决定加载哪个 task 配置（数据形状、数据路径等），以及本次实验的基础命名。
+# =========================
+defaults:
+  - task: single_realrobot
+
+name: train_simple_dp3
+
+
+# =========================
+# 2) 全局变量与时序窗口
+# 这些变量会被后续模块引用，控制观测步长、动作步长、预测 horizon 等核心时序设置。
+# =========================
+task_name: ${task.name}
+shape_meta: ${task.shape_meta}
+exp_name: "debug"
+
+# horizon: 4
+horizon: 16
+n_obs_steps: 2
+# n_action_steps: 3
+n_action_steps: 8
+n_latency_steps: 0
+dataset_obs_steps: ${n_obs_steps}
+keypoint_visible_rate: 1.0
+obs_as_global_cond: True
+
+# =========================
+# 3) 策略网络主体（SimpleDP3）
+# 包含模型结构、扩散采样参数、点云编码器配置。
+# =========================
+policy:
+  _target_: diffusion_policy_3d.policy.simple_dp3.SimpleDP3
+  use_point_crop: true
+  condition_type: film
+  use_down_condition: true
+  use_mid_condition: true
+  use_up_condition: true
+  
+  diffusion_step_embed_dim: 128
+  down_dims:
+  - 128
+  - 256
+  - 384
+  crop_shape:
+  - 80
+  - 80
+  encoder_output_dim: 64
+  horizon: ${horizon}
+  kernel_size: 5
+  n_action_steps: ${n_action_steps}
+  n_groups: 8
+  n_obs_steps: ${n_obs_steps}
+
+  noise_scheduler:
+    _target_: diffusers.schedulers.scheduling_ddim.DDIMScheduler
+    num_train_timesteps: 100
+    beta_start: 0.0001
+    beta_end: 0.02
+    beta_schedule: squaredcos_cap_v2
+    clip_sample: True
+    set_alpha_to_one: True
+    steps_offset: 0
+    prediction_type: sample
+
+
+  num_inference_steps: 10
+  obs_as_global_cond: true
+  shape_meta: ${shape_meta}
+
+
+  # whether to use point cloud's color
+  use_pc_color: false
+  # type of pointnet
+  pointnet_type: "pointnet"
+
+
+  pointcloud_encoder_cfg:
+    in_channels: 3
+    out_channels: ${policy.encoder_output_dim}
+    use_layernorm: true
+    final_norm: layernorm # layernorm, none
+    normal_channel: false
+
+
+# =========================
+# 4) EMA 参数
+# 训练时维护一个指数滑动平均模型，通常用于更稳定的评估/推理。
+# =========================
+ema:
+  _target_: diffusion_policy_3d.model.diffusion.ema_model.EMAModel
+  update_after_step: 0
+  inv_gamma: 1.0
+  power: 0.75
+  min_value: 0.0
+  max_value: 0.9999
+
+# =========================
+# 5) 训练/验证数据加载
+# 控制 batch size、多进程加载、是否打乱等 DataLoader 行为。
+# =========================
+dataloader:
+  batch_size: 128
+  num_workers: 8
+  shuffle: True
+  pin_memory: True
+  persistent_workers: False
+
+val_dataloader:
+  batch_size: 128
+  num_workers: 8
+  shuffle: False
+  pin_memory: True
+  persistent_workers: False
+
+# =========================
+# 6) 优化器
+# 定义参数更新算法与学习率相关超参数。
+# =========================
+optimizer:
+  _target_: torch.optim.AdamW
+  lr: 1.0e-4
+  betas: [0.95, 0.999]
+  eps: 1.0e-8
+  weight_decay: 1.0e-6
+
+# =========================
+# 7) 训练流程控制
+# 包括设备、随机种子、恢复训练、训练轮数、保存/评估频率等。
+# =========================
+training:
+  device: "cuda:0"
+  seed: 42
+  debug: False
+  resume: True
+  lr_scheduler: cosine
+  lr_warmup_steps: 500
+  num_epochs: 1000
+  gradient_accumulate_every: 1
+  use_ema: True
+  rollout_every: 200
+  checkpoint_every: 200
+  val_every: 1
+  sample_every: 5
+  max_train_steps: null
+  max_val_steps: null
+  tqdm_interval_sec: 1.0
+
+# =========================
+# 8) 日志系统（WandB）
+# 配置实验分组、项目名、在线/离线模式与标签。
+# =========================
+logging:
+  group: ${exp_name}
+  id: null
+  mode: online
+  name: ${training.seed}
+  project: dp3
+  resume: true
+  tags:
+  - dp3
+
+
+# =========================
+# 9) Checkpoint 策略
+# 控制是否保存模型、按什么指标保留 top-k、是否保留 latest。
+# =========================
+checkpoint:
+  save_ckpt: False # if True, save checkpoint every checkpoint_every
+  topk:
+    monitor_key: test_mean_score
+    mode: max
+    k: 1
+    format_str: 'epoch={epoch:04d}-test_mean_score={test_mean_score:.3f}.ckpt'
+  save_last_ckpt: True # this only saves when save_ckpt is True
+  save_last_snapshot: False
+
+# =========================
+# 10) 多次运行输出目录模板
+# 统一管理不同时间戳实验的输出路径与名称。
+# =========================
+multi_run:
+  run_dir: data/outputs/${now:%Y.%m.%d}/${now:%H.%M.%S}_${name}_${task_name}
+  wandb_name_base: ${now:%Y.%m.%d-%H.%M.%S}_${name}_${task_name}
+
+# =========================
+# 11) Hydra 运行目录配置
+# 控制单次运行和 sweep 时的日志/产物存储目录。
+# =========================
+hydra:
+  job:
+    override_dirname: ${name}
+  run:
+    dir: data/outputs/${now:%Y.%m.%d}/${now:%H.%M.%S}_${name}_${task_name}
+  sweep:
+    dir: data/outputs/${now:%Y.%m.%d}/${now:%H.%M.%S}_${name}_${task_name}
+    subdir: ${hydra.job.num}
