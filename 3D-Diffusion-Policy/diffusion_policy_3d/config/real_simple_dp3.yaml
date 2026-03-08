@@ -101,14 +101,14 @@ ema:
 # 控制 batch size、多进程加载、是否打乱等 DataLoader 行为。
 # =========================
 dataloader:
-  batch_size: 128
+  batch_size: 256
   num_workers: 8
   shuffle: True
   pin_memory: True
   persistent_workers: False
 
 val_dataloader:
-  batch_size: 128
+  batch_size: 256
   num_workers: 8
   shuffle: False
   pin_memory: True
